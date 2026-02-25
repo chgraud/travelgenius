@@ -110,6 +110,11 @@ with st.sidebar:
     
     c_orig = st.text_input("Origen:", "Bilbao")
     
+    # Inicializamos variables por seguridad para que no den error luego
+    tipo_vehiculo = "N/A"
+    modelo_coche = "N/A"
+    estilo_conduccion = "N/A"
+    
     if tipo_viaje == "🏙️ Ciudad Única":
         c_dest = st.text_input("Destino:", "")
         pref_trans = "Cualquiera"
@@ -118,6 +123,15 @@ with st.sidebar:
         c_dest = st.text_area("Ruta (ciudades separadas por coma):", "")
         pref_trans = st.selectbox("Preferencia de Transporte:", ["🚗 Coche Propio / Alquiler", "🚆 Transporte Público"])
         ritmo_ruta = st.select_slider("Ritmo:", options=["Relajado", "Equilibrado", "Intenso"], value="Equilibrado")
+        
+        # --- NUEVO MÓDULO: MOTOR Y CARRETERA ---
+        if pref_trans == "🚗 Coche Propio / Alquiler":
+            st.markdown("---")
+            st.markdown("**⚙️ Detalles del Vehículo**")
+            tipo_vehiculo = st.selectbox("Tipo:", ["🚗 Coche (Combustión/Híbrido)", "⚡ Coche Eléctrico (EV)", "🚐 Furgoneta Camper / Autocaravana"])
+            modelo_coche = st.text_input("Modelo o Consumo est.:", placeholder="Ej: Toyota RAV4 o 6.5 L/100km")
+            estilo_conduccion = st.radio("Tipo de Ruta:", ["🛣️ Rápida (Autopistas/Peajes)", "🌲 Escénica (Secundarias/Paisajes)"])
+            st.markdown("---")
 
     num_adultos = st.number_input("👥 Adultos", 1, 9, 2)
     viajan_ninos = st.checkbox("👶 ¿Niños/Bebés?")
@@ -340,25 +354,76 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
             with st.spinner("Construyendo guía..."):
                 mes_n = MESES_FULL[f_ida.month-1][1]
                 
-                p1_c = f"Guía de {c_dest}. {num_dias} días para {grupo_texto}. Plan: {estilo_viaje}." if tipo_viaje == "🏙️ Ciudad Única" else f"Roadtrip por: {c_dest}. Transporte: {pref_trans}. Ritmo: {ritmo_ruta}."
-                p1 = p1_c + """ Usa Markdown. Añade Google Maps.
-                🌟 Desvíos Genius: Recomienda joya oculta cercana a la ruta.
-                🎧 Playlist de Carretera: 3 canciones.
-                🍽️ Restaurantes Top (Económicos, Calidad-Precio, Premium).
-                🎬 Cultura Pop y Trampas para Turistas."""
+                # --- LÓGICA DEL PROMPT 1: ITINERARIO ---
+                if tipo_viaje == "🏙️ Ciudad Única":
+                    p1_c = f"Actúa como el mejor guía local de {c_dest}. Itinerario de {num_dias} días para {grupo_texto}. Plan: {estilo_viaje}."
+                else:
+                    detalles_motor = f"Vehículo: {tipo_vehiculo} (Modelo/Consumo: {modelo_coche}). Estilo de ruta: {estilo_conduccion}." if pref_trans == "🚗 Coche Propio / Alquiler" else ""
+                    p1_c = f"Actúa como experto en Roadtrips. Ruta: {c_dest} (Desde {c_orig}). Duración: {num_dias} días. Transporte: {pref_trans}. Ritmo: {ritmo_ruta}. {detalles_motor}"
+
+                p1 = p1_c + """
+                Adapta todo a sus edades. Usa Markdown y sé muy estructurado.
+                AL FINAL DE CADA DÍA añade: [🗺️ Abrir Ruta en Google Maps](https://www.google.com/maps/dir/Lugar1/Lugar2/Lugar3)
+                """
+                
+                if pref_trans == "🚗 Coche Propio / Alquiler" and tipo_viaje != "🏙️ Ciudad Única":
+                    p1 += """
+                ### 🅿️ Estrategia de Aparcamiento y Pernocta
+                Para cada ciudad principal, recomienda:
+                1. Un Parking P+R (Aparca y Viaja) a las afueras, barato y conectado por transporte al centro.
+                2. Un Parking VIP/Céntrico para los que prefieren pagar más pero ahorrar tiempo.
+                """
+                    if "Furgoneta" in tipo_vehiculo or "Autocaravana" in tipo_vehiculo:
+                        p1 += "3. 🚐 Un par de 'Spots' legales o campings recomendados para dormir con la camper/autocaravana cerca de cada zona.\n"
+                
+                p1 += """
+                ### 🌟 Desvíos Genius (IMPORTANTE)
+                Si hay alguna joya oculta o pueblo espectacular cerca de la ruta que no haya incluido, recomiéndalo.
+                ### 🎧 Entretenimiento de Carretera
+                Recomienda 3 canciones y 1 temática de podcast perfecta para esta ruta.
+                ### 🍽️ Restaurantes Top (15)
+                Con ⭐. 🟢 Económicos: 5. 🟡 Calidad-Precio: 5. 🔴 Premium: 5.
+                ### 🎬 Cultura Pop y Trampas para Turistas
+                1 o 2 escenarios de películas/series y 2 estafas comunes aquí.
+                """
                 st.session_state.guia_p1 = preguntar_ia_seguro(p1)
                 
-                p2 = f"Logística para {c_dest} en {mes_n}. Movilidad, estimación de gasolina/peajes (si es coche), clima, presupuesto y manual de supervivencia (enchufes, farmacias)."
+                # --- LÓGICA DEL PROMPT 2: LOGÍSTICA Y MATEMÁTICAS ---
+                p2 = f"""Actúa como experto logístico para {grupo_texto} viajando a {c_dest} en {mes_n}.
+                """
+                if pref_trans == "🚗 Coche Propio / Alquiler" and tipo_viaje != "🏙️ Ciudad Única":
+                    p2 += f"""
+                ### ⛽ Cálculo Matemático de Carretera
+                Haz un cálculo estructurado de:
+                - Distancia total aproximada en KM de esta ruta completa.
+                - Gasto estimado de combustible teniendo en cuenta este vehículo/consumo: {modelo_coche} (Tipo: {tipo_vehiculo}).
+                - Coste aproximado de PEAJES de la ruta.
+                - Si es Coche Eléctrico (EV), menciona brevemente el estado de la red de recarga en esta zona.
+                
+                ### 👮 Alertas Legales y Fronterizas
+                Menciona normas de conducción (ZTLs, viñetas de autopista, límites de velocidad) de las zonas a visitar.
+                """
+                
+                p2 += """
+                ### 🚇 Movilidad Urbana
+                ¿Qué abono de transporte comprar para moverse por dentro de las ciudades?
+                ### 🌤️ Clima Real
+                Clima esperado y consejos de vestimenta.
+                ### 💰 Presupuesto Realista
+                Coste estimado TOTAL para todas las personas (excluyendo vuelos).
+                ### 🧻 Supervivencia Urbana
+                Enchufe, Baños Públicos, Supermercados Locales, Farmacias.
+                """
                 st.session_state.guia_p2 = preguntar_ia_seguro(p2)
                 
-                p3 = f"Maleta 10 objetos para {c_dest} en {mes_n}. SOLO array JSON de strings."
+                p3 = f"Viajan {grupo_texto} a {c_dest} en {mes_n}. Genera lista de 10-12 objetos imprescindibles para maleta/roadtrip. SOLO array JSON de strings: ['Obj 1', 'Obj 2']."
                 res_maleta = preguntar_ia_seguro(p3)
                 try: st.session_state.guia_p3 = json.loads(re.search(r'\[.*\]', res_maleta, re.DOTALL).group())
-                except: st.session_state.guia_p3 = ["Pasaporte", "Cargador", "Ropa cómoda"]
+                except: st.session_state.guia_p3 = ["Documentación", "Cargador coche", "Botiquín", "Gafas de sol"]
 
         # SEGURO DE VIDA PARA TABS
         if 'guia_p1' in st.session_state and 'guia_p2' in st.session_state:
-            tab1, tab2, tab3 = st.tabs(["🗺️ Itinerario & Secretos", "🚇 Logística & Supervivencia", "🎒 Maleta"])
+            tab1, tab2, tab3 = st.tabs(["🗺️ Itinerario & Secretos", "🚇 Logística & Motor", "🎒 Equipaje"])
             with tab1: st.markdown(st.session_state.guia_p1)
             with tab2: st.markdown(st.session_state.guia_p2)
             with tab3:
@@ -366,4 +431,4 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
             
             st.divider()
             texto_descarga = st.session_state.guia_p1 + "\n\n---\n\n" + st.session_state.guia_p2
-            st.download_button("⬇️ Descargar Guía Escrita", texto_descarga, f"Guia_{ciudad_1.replace(' ', '_')}.md", type="primary")
+            st.download_button("⬇️ Descargar Guía del Viaje", texto_descarga, f"Guia_Roadtrip.md", type="primary")
