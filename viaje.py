@@ -321,33 +321,77 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
     st.divider()
     cm, cg = st.columns([0.4, 0.6])
     with cm:
-        st.subheader(f"📍 Radar Turístico de {ciudad_1}")
-        if st.button("🌍 Cargar Radar Inteligente"):
-            prompt_mapa = f"Identifica 15-20 puntos imperdibles de {ciudad_1}. Clasifica en 'monumento', 'naturaleza' o 'cultura'. Devuelve SOLO JSON: [{{'nombre':'...','lat':0.0,'lon':0.0,'tipo':'monumento'}}]"
-            res_m = preguntar_ia_seguro(prompt_mapa)
-            try:
-                match = re.search(r'\[.*\]', res_m, re.DOTALL)
-                if match:
-                    pts = json.loads(match.group())
-                    for p in pts:
-                        t = p.get('tipo', '')
-                        if t == 'naturaleza': p['color'] = [50, 200, 50, 200]
-                        elif t == 'cultura': p['color'] = [50, 100, 255, 200]
-                        else: p['color'] = [255, 75, 75, 200]
-                    st.session_state.mapa_gen = pts
+        st.subheader(f"📍 Mapa Interactivo")
+        if st.button("🌍 Generar Mapa / Ruta"):
+            with st.spinner("Trazando coordenadas..."):
+                if tipo_viaje == "🚗 Roadtrip / Ruta":
+                    prompt_mapa = f"Dame las coordenadas exactas de esta ruta en orden: {c_orig}, {c_dest}. SOLO devuelve un array JSON estricto con keys: nombre, lat, lon. Ejemplo: [{{\"nombre\":\"Bilbao\", \"lat\":43.26, \"lon\":-2.93}}]"
                 else:
-                    st.error("⚠️ La IA no devolvió las coordenadas correctamente. Reintenta.")
-            except Exception as e:
-                st.error("❌ Error procesando el mapa. Por favor, reintenta.")
+                    prompt_mapa = f"Identifica 15 puntos imperdibles de {c_dest}. Clasifica en 'monumento', 'naturaleza' o 'cultura'. SOLO devuelve JSON: [{{'nombre':'...','lat':0.0,'lon':0.0,'tipo':'monumento'}}]"
+                
+                res_m = preguntar_ia_seguro(prompt_mapa)
+                try:
+                    match = re.search(r'\[.*\]', res_m, re.DOTALL)
+                    if match:
+                        pts = json.loads(match.group())
+                        st.session_state.mapa_gen = pts
+                    else:
+                        st.error("⚠️ La IA no devolvió las coordenadas correctamente. Reintenta.")
+                except Exception as e:
+                    st.error("❌ Error procesando el mapa. Por favor, reintenta.")
 
-        if 'mapa_gen' in st.session_state and isinstance(st.session_state.mapa_gen, list):
+        if 'mapa_gen' in st.session_state and isinstance(st.session_state.mapa_gen, list) and st.session_state.mapa_gen:
             pts = st.session_state.mapa_gen
-            if pts: # Asegurarnos de que la lista no esté vacía
-                lat_c = sum(p['lat'] for p in pts)/len(pts)
-                lon_c = sum(p['lon'] for p in pts)/len(pts)
+            lat_c = sum(p['lat'] for p in pts)/len(pts)
+            lon_c = sum(p['lon'] for p in pts)/len(pts)
+            
+            capas = []
+            if tipo_viaje == "🚗 Roadtrip / Ruta":
+                # 1. Dibujar la línea de la ruta (PathLayer)
+                ruta_coords = [[p['lon'], p['lat']] for p in pts]
+                capas.append(pdk.Layer(
+                    "PathLayer",
+                    data=[{"path": ruta_coords}],
+                    get_path="path",
+                    get_color=[255, 50, 50, 255],
+                    width_scale=20,
+                    width_min_pixels=5,
+                    pickable=True
+                ))
+                # 2. Dibujar los puntos de las ciudades
+                capas.append(pdk.Layer(
+                    "ScatterplotLayer",
+                    data=pts,
+                    get_position=["lon", "lat"],
+                    get_fill_color=[255, 200, 0, 255],
+                    get_radius=5000,
+                    pickable=True
+                ))
+                st.markdown("🔴 *Trazado de tu Roadtrip*")
+                zoom_inicial = 5 # Zoom más alejado para ver toda la ruta
+            else:
+                for p in pts:
+                    t = p.get('tipo', '')
+                    if t == 'naturaleza': p['color'] = [50, 200, 50, 200]
+                    elif t == 'cultura': p['color'] = [50, 100, 255, 200]
+                    else: p['color'] = [255, 75, 75, 200]
+                capas.append(pdk.Layer(
+                    "ScatterplotLayer",
+                    data=pts,
+                    get_position=["lon", "lat"],
+                    get_fill_color="color",
+                    get_radius=180,
+                    pickable=True
+                ))
                 st.markdown("🔴 *Monumentos* | 🟢 *Naturaleza* | 🔵 *Cultura*")
-                st.pydeck_chart(pdk.Deck(initial_view_state=pdk.ViewState(latitude=lat_c, longitude=lon_c, zoom=12, pitch=45),
-                    layers=[pdk.Layer("ScatterplotLayer", data=pts, get_position=["lon", "lat"], get_fill_color="color", get_radius=180, pickable=True)], tooltip={"text": "{nombre}"}))
+                zoom_inicial = 12 # Zoom cercano para ciudad
+
+            st.pydeck_chart(pdk.Deck(
+                map_style="mapbox://styles/mapbox/light-v9",
+                initial_view_state=pdk.ViewState(latitude=lat_c, longitude=lon_c, zoom=zoom_inicial, pitch=45),
+                layers=capas,
+                tooltip={"text": "{nombre}"}
+            ))
     with cg:
         st.subheader("👑 Guía Maestra de Viaje")
         if st.button("📝 Generar Itinerario y Logística"):
