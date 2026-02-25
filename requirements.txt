@@ -1,0 +1,5 @@
+streamlit
+amadeus
+google-generativeai
+pydeck
+python-dotenv
