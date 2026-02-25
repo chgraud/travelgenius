@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 # --- CONFIGURACIÓN E INICIALIZACIÓN ---
 load_dotenv()
-st.set_page_config(page_title="Travel Genius Pro 5.3", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="Travel Genius Pro 6.0 - Diamond Edition", layout="wide", page_icon="🌍")
 
 BLOQUES_HORARIOS = {
     "Cualquier hora": (0, 24), "Mañana (06:00 - 12:00)": (6, 12),
@@ -40,32 +40,30 @@ def iniciar_servicios():
 
 amadeus, model = iniciar_servicios()
 
-# --- FUNCIONES NÚCLEO ---
+# --- FUNCIONES NÚCLEO Y BUSCADOR IATA DINÁMICO ---
 @st.cache_data(show_spinner=False, ttl=3600)
 def preguntar_ia_seguro(prompt_texto):
     if not model: return "⚠️ IA no disponible."
     for i in range(3):
         try:
-            time.sleep(0.5)
+            time.sleep(3) # Respiración vital para no saturar la API gratuita
             return model.generate_content(prompt_texto).text
         except Exception as e:
             if "429" in str(e).lower() or "quota" in str(e).lower():
+                st.warning(f"⏳ Google respirando para no saturarse. Reintentando en 20s... ({i+1}/3)")
                 time.sleep(20)
                 continue
             return f"❌ Error: {str(e)}"
-    return "❌ Límite alcanzado."
+    return "❌ Límite alcanzado. Cuota de IA agotada."
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def obtener_iata_dinamico(ciudad):
     if not ciudad: return "MAD"
-    
-    # 1. Comprobar diccionario local primero (Ultra rápido y sin gastar IA)
     ciudad_limpia = ciudad.strip().lower()
     if ciudad_limpia in CIUDADES_TRADUCCION:
         return CIUDADES_TRADUCCION[ciudad_limpia]
         
-    # 2. Si es una ciudad rara, entonces sí le preguntamos a la IA
-    prompt = f"Dime SOLO el código IATA de 3 letras del aeropuerto comercial más práctico para viajar a '{ciudad}'. Si es un pueblo sin aeropuerto, dime el aeropuerto principal más cercano. Solo las 3 letras mayúsculas."
+    prompt = f"Dime SOLO el código IATA de 3 letras del aeropuerto comercial más cercano a '{ciudad}'. Solo las 3 letras mayúsculas."
     respuesta = preguntar_ia_seguro(prompt).strip().upper()
     match = re.search(r'\b[A-Z]{3}\b', respuesta)
     return match.group(0) if match else "MAD"
@@ -94,12 +92,11 @@ def calcular_fecha(mes, dias, tipo, semana=1, inicio=10):
         if dias == 3: ida += timedelta(days=1)
     else: ida = datetime(año, mes, min(inicio, u))
     return ida.date(), (ida + timedelta(days=dias)).date()
-
 # --- BARRA LATERAL ---
 if 'busqueda_iniciada' not in st.session_state:
     st.session_state.busqueda_iniciada = False
 
-st.title("🌍 Travel Genius Pro: Roadtrip Universal")
+st.title("🌍 Travel Genius Pro: Roadtrip & Flights")
 
 MESES_FULL = [(1,"Enero"), (2,"Febrero"), (3,"Marzo"), (4,"Abril"), (5,"Mayo"), (6,"Junio"),
               (7,"Julio"), (8,"Agosto"), (9,"Septiembre"), (10,"Octubre"), (11,"Noviembre"), (12,"Diciembre")]
@@ -110,7 +107,6 @@ with st.sidebar:
     
     c_orig = st.text_input("Origen:", "Bilbao")
     
-    # Inicializamos variables por seguridad para que no den error luego
     tipo_vehiculo = "N/A"
     modelo_coche = "N/A"
     estilo_conduccion = "N/A"
@@ -124,7 +120,6 @@ with st.sidebar:
         pref_trans = st.selectbox("Preferencia de Transporte:", ["🚗 Coche Propio / Alquiler", "🚆 Transporte Público"])
         ritmo_ruta = st.select_slider("Ritmo:", options=["Relajado", "Equilibrado", "Intenso"], value="Equilibrado")
         
-        # --- NUEVO MÓDULO: MOTOR Y CARRETERA ---
         if pref_trans == "🚗 Coche Propio / Alquiler":
             st.markdown("---")
             st.markdown("**⚙️ Detalles del Vehículo**")
@@ -135,6 +130,8 @@ with st.sidebar:
 
     num_adultos = st.number_input("👥 Adultos", 1, 9, 2)
     viajan_ninos = st.checkbox("👶 ¿Niños/Bebés?")
+    viaja_mascota = st.checkbox("🐶 ¿Viajas con mascota?")
+    
     edades_ninos = []
     if viajan_ninos:
         num_ninos = st.number_input("¿Cuántos niños?", 1, 5, 1)
@@ -144,6 +141,8 @@ with st.sidebar:
 
     num_viajeros = num_adultos + len(edades_ninos)
     grupo_texto = f"{num_adultos} adultos" + (f" y {len(edades_ninos)} niños" if edades_ninos else "")
+    if viaja_mascota: grupo_texto += " y 1 mascota"
+    
     api_adults = num_adultos + sum(1 for e in edades_ninos if e >= 12)
     api_children = sum(1 for e in edades_ninos if 2 <= e < 12)
     api_infants = sum(1 for e in edades_ninos if e < 2)
@@ -181,34 +180,30 @@ with st.sidebar:
                 if k in st.session_state: del st.session_state[k]
         else:
             st.warning("⚠️ Por favor, rellena el Origen y el Destino para comenzar.")
-
 # --- LÓGICA DE RESULTADOS ---
 if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
-    # 🛡️ SOLUCIÓN: Aislar el destino real ignorando el origen si lo ponen al principio
-    if tipo_viaje == "🚗 Roadtrip / Ruta":
-        destinos_lista = [c.strip() for c in c_dest.split(',')]
-        # Si el primer destino es igual al origen (ej. Bilbao a Bilbao), cogemos el segundo
-        if len(destinos_lista) > 1 and destinos_lista[0].lower() == c_orig.lower():
-            ciudad_1 = destinos_lista[1]
-        else:
-            ciudad_1 = destinos_lista[0]
+    
+    # 🛡️ Bloqueo Bucle Origen (Ignora origen si es el primer destino)
+    destinos_lista = [c.strip() for c in c_dest.split(',')]
+    if tipo_viaje == "🚗 Roadtrip / Ruta" and len(destinos_lista) > 1 and destinos_lista[0].lower() == c_orig.lower():
+        ciudad_1 = destinos_lista[1]
     else:
-        ciudad_1 = c_dest
+        ciudad_1 = destinos_lista[0]
         
     st.write("---")
     
-    # 🧠 PASO 0: OBTENER IATAS Y DIAGNÓSTICO
+    # 🧠 PASO 0: OBTENER IATAS DINÁMICOS Y DIAGNÓSTICO
     if 'iata_origen' not in st.session_state:
-        with st.spinner("Mapeando aeropuertos más cercanos..."):
+        with st.spinner("Mapeando aeropuertos más cercanos con IA..."):
             st.session_state.iata_origen = obtener_iata_dinamico(c_orig)
             st.session_state.iata_destino = obtener_iata_dinamico(ciudad_1)
 
     if 'analisis_transporte' not in st.session_state:
         with st.spinner("Analizando logística del primer salto..."):
-            prompt_dist = f"""Origen: '{c_orig}'. Primera parada: '{ciudad_1}'.
-            Analiza ÚNICAMENTE la viabilidad de llegar desde el origen a la primera parada. Ignora el resto de la ruta.
-            - Si están cerca (<600km) o es cómodo ir en coche/tren, responde 'VUELOS_NO' y explica.
-            - Si están lejos (>600km) o en otro país, responde 'VUELOS_SI' y explica que es mejor volar al inicio.
+            prompt_dist = f"""Actúa como experto en logística. Origen: '{c_orig}'. Primera parada: '{ciudad_1}'.
+            Analiza SOLO la viabilidad de llegar de '{c_orig}' a '{ciudad_1}'.
+            - Si es corto (<600km) o cómodo en coche/tren de una tirada, responde 'VUELOS_NO' y explica.
+            - Si está lejos (>600km) o país lejano, responde 'VUELOS_SI' y explica que es mejor volar.
             Responde empezando con la palabra clave."""
             st.session_state.analisis_transporte = preguntar_ia_seguro(prompt_dist)
 
@@ -238,7 +233,7 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
                         st.success("✅ Vuelos directos encontrados.")
                         v_base = v_directos
                     else:
-                        st.warning("⚠️ No hay vuelos directos disponibles. Mostrando opciones con escala:")
+                        st.warning("⚠️ No hay vuelos directos disponibles para estas fechas. Mostrando opciones con escala:")
                         v_base = v_unicos
                 else:
                     v_base = v_unicos
@@ -254,11 +249,10 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
                     if ida_ok and vta_ok: v_filtrados.append(v)
 
                 v_finales = v_filtrados if v_filtrados else v_base
-                if not v_filtrados: st.warning("⚠️ Sin vuelos exactos para tu horario. Mostrando otras opciones:")
 
                 if v_finales and 'semaforo_vuelo' not in st.session_state:
                     mejor_p = float(v_finales[0]['price']['total']) / num_viajeros
-                    st.session_state.semaforo_vuelo = preguntar_ia_seguro(f"Vuelo a {st.session_state.iata_destino} por {mejor_p:.2f}€/pax. Responde: 🟢 Chollo, 🟡 Normal o 🔴 Caro.")
+                    st.session_state.semaforo_vuelo = preguntar_ia_seguro(f"Vuelo de {st.session_state.iata_origen} a {st.session_state.iata_destino} en {f_ida.month} por {mejor_p:.2f}€/pax. Responde: 🟢 Chollo, 🟡 Normal o 🔴 Caro.")
                 if 'semaforo_vuelo' in st.session_state: st.info(f"**Semáforo IA:** {st.session_state.semaforo_vuelo}")
 
                 for v in v_finales[:10]:
@@ -279,17 +273,20 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
                             st.write(f"🎒 Mano: {'✅' if bags > 0 or carrier not in ['FR', 'VY', 'U2', 'W6'] else '❌'}")
                             st.write(f"🧳 Facturada: {'✅' if bags > 0 else '❌'} ({bags})")
                         with c3:
-                            st.markdown(f"[🛒 Buscar en Google Flights](https://www.google.es/travel/flights?q=Flights%20from%20{st.session_state.iata_origen}%20to%20{st.session_state.iata_destino})")
+                            st.markdown(f"[🛒 Google Flights](https://www.google.es/travel/flights?q=Flights%20from%20{st.session_state.iata_origen}%20to%20{st.session_state.iata_destino})")
             else: 
-                st.error("❌ No hay vuelos para esas fechas exactas en Amadeus. Prueba a cambiar el día.")
+                st.error("❌ No hay vuelos en Amadeus para estas fechas exactas.")
         else:
-            st.success("🚙 Es más inteligente ir por tierra al primer destino. Vuelos desactivados.")
+            st.success(f"🚙 Es más inteligente ir de {c_orig} a {ciudad_1} por tierra. Vuelos ocultos.")
 
     with col_h:
         st.subheader("🏨 Conserje de Alojamiento")
-        h_ubicacion = st.radio("Ubicación:", ["📍 Centro", "🚶 Zona Intermedia", "🚇 Periferia"], horizontal=True)
+        h_ubicacion = st.radio("Ubicación Preferida:", ["📍 Centro", "🚶 Zona Intermedia", "🚇 Periferia"], horizontal=True)
+        
+        pet_text = " MUY IMPORTANTE: Busca opciones 'Pet Friendly' que admitan mascotas." if viaja_mascota else ""
+
         if st.button("🗺️ Recomendar Barrios"):
-            prompt_b = f"3 zonas en {c_dest} para {grupo_texto}. Zonas tipo '{h_ubicacion}'." if tipo_viaje == "🏙️ Ciudad Única" else f"Para la ruta '{c_dest}', dime 1 zona ideal (tipo '{h_ubicacion}') en CADA parada para {grupo_texto}."
+            prompt_b = f"3 barrios en {c_dest} para {grupo_texto}. Zonas tipo '{h_ubicacion}'. {pet_text}" if tipo_viaje == "🏙️ Ciudad Única" else f"Para la ruta '{c_dest}', dime 1 zona ideal (tipo '{h_ubicacion}') en CADA parada para {grupo_texto}. {pet_text}"
             st.session_state.barrios_gen = preguntar_ia_seguro(prompt_b)
             
         if 'barrios_gen' in st.session_state: st.info(st.session_state.barrios_gen)
@@ -302,22 +299,21 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
 
         if st.button("🪄 Buscar Alojamientos Ideales"):
             zona_texto = f"en el barrio de {h_barrio_manual}" if h_barrio_manual else f"en la zona {h_ubicacion}"
-            prompt_hoteles = f"Conserje para {c_dest}. Busco {h_tipo} {zona_texto} para {grupo_texto}. Plan {estilo_viaje}. Presupuesto max {h_presupuesto}€. Dame opciones reales."
+            prompt_hoteles = f"Conserje para {c_dest}. Busco {h_tipo} {zona_texto} para {grupo_texto}. Plan {estilo_viaje}. Max {h_presupuesto}€. {pet_text}" if tipo_viaje == "🏙️ Ciudad Única" else f"Recomienda 1 {h_tipo} {zona_texto} para CADA parada de la ruta {c_dest}. Grupo: {grupo_texto}. Max {h_presupuesto}€. {pet_text}"
             st.session_state.hoteles_gen = preguntar_ia_seguro(prompt_hoteles)
         
         if 'hoteles_gen' in st.session_state:
             st.markdown(st.session_state.hoteles_gen)
             ciudades_rutas = [c_dest] if tipo_viaje == "🏙️ Ciudad Única" else [c.strip() for c in c_dest.split(',')]
             for ciud in ciudades_rutas:
-                termino = f"{h_barrio_manual} {ciud}" if h_barrio_manual else f"{h_ubicacion.replace('📍', '').replace('🚶', '').replace('🚇', '').strip()} {ciud}"
-                dest_url = urllib.parse.quote(termino)
+                termino_busqueda = f"{h_barrio_manual} {ciud} {'pet friendly' if viaja_mascota else ''}" if h_barrio_manual else f"{h_ubicacion.replace('📍', '').replace('🚶', '').replace('🚇', '').strip()} {ciud} {'pet friendly' if viaja_mascota else ''}"
+                dest_url = urllib.parse.quote(termino_busqueda)
                 with st.expander(f"🛒 Ver opciones en {ciud}"):
                     c_b1, c_b2, c_b3 = st.columns(3)
                     c_b1.markdown(f'<a href="https://www.booking.com/searchresults.html?ss={dest_url}" target="_blank"><button style="width:100%; background-color:#003580; color:white; border:none; padding:8px; border-radius:5px;">Booking</button></a>', unsafe_allow_html=True)
                     c_b2.markdown(f'<a href="https://www.airbnb.es/s/{dest_url}/homes" target="_blank"><button style="width:100%; background-color:#FF5A5F; color:white; border:none; padding:8px; border-radius:5px;">Airbnb</button></a>', unsafe_allow_html=True)
                     c_b3.markdown(f'<a href="https://es.hotels.com/Hotel-Search?destination={dest_url}" target="_blank"><button style="width:100%; background-color:#D32F2F; color:white; border:none; padding:8px; border-radius:5px;">Hotels</button></a>', unsafe_allow_html=True)
-
-    # --- EXTRAS: MAPA Y GUÍA ---
+# --- MAPA Y GUÍA ---
     st.divider()
     cm, cg = st.columns([0.4, 0.6])
     with cm:
@@ -336,9 +332,9 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
                         pts = json.loads(match.group())
                         st.session_state.mapa_gen = pts
                     else:
-                        st.error("⚠️ La IA no devolvió las coordenadas correctamente. Reintenta.")
+                        st.error("⚠️ La IA no devolvió las coordenadas correctamente.")
                 except Exception as e:
-                    st.error("❌ Error procesando el mapa. Por favor, reintenta.")
+                    st.error("❌ Error procesando el mapa.")
 
         if 'mapa_gen' in st.session_state and isinstance(st.session_state.mapa_gen, list) and st.session_state.mapa_gen:
             pts = st.session_state.mapa_gen
@@ -347,125 +343,99 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
             
             capas = []
             if tipo_viaje == "🚗 Roadtrip / Ruta":
-                # 1. Dibujar la línea de la ruta (PathLayer)
                 ruta_coords = [[p['lon'], p['lat']] for p in pts]
-                capas.append(pdk.Layer(
-                    "PathLayer",
-                    data=[{"path": ruta_coords}],
-                    get_path="path",
-                    get_color=[255, 50, 50, 255],
-                    width_scale=20,
-                    width_min_pixels=5,
-                    pickable=True
-                ))
-                # 2. Dibujar los puntos de las ciudades
-                capas.append(pdk.Layer(
-                    "ScatterplotLayer",
-                    data=pts,
-                    get_position=["lon", "lat"],
-                    get_fill_color=[255, 200, 0, 255],
-                    get_radius=5000,
-                    pickable=True
-                ))
+                capas.append(pdk.Layer("PathLayer", data=[{"path": ruta_coords}], get_path="path", get_color=[255, 50, 50, 255], width_scale=20, width_min_pixels=5, pickable=True))
+                capas.append(pdk.Layer("ScatterplotLayer", data=pts, get_position=["lon", "lat"], get_fill_color=[255, 200, 0, 255], get_radius=5000, pickable=True))
                 st.markdown("🔴 *Trazado de tu Roadtrip*")
-                zoom_inicial = 5 # Zoom más alejado para ver toda la ruta
+                zoom_inicial = 5 
             else:
                 for p in pts:
                     t = p.get('tipo', '')
                     if t == 'naturaleza': p['color'] = [50, 200, 50, 200]
                     elif t == 'cultura': p['color'] = [50, 100, 255, 200]
                     else: p['color'] = [255, 75, 75, 200]
-                capas.append(pdk.Layer(
-                    "ScatterplotLayer",
-                    data=pts,
-                    get_position=["lon", "lat"],
-                    get_fill_color="color",
-                    get_radius=180,
-                    pickable=True
-                ))
+                capas.append(pdk.Layer("ScatterplotLayer", data=pts, get_position=["lon", "lat"], get_fill_color="color", get_radius=180, pickable=True))
                 st.markdown("🔴 *Monumentos* | 🟢 *Naturaleza* | 🔵 *Cultura*")
-                zoom_inicial = 12 # Zoom cercano para ciudad
+                zoom_inicial = 12
 
-            st.pydeck_chart(pdk.Deck(
-                map_style="mapbox://styles/mapbox/light-v9",
-                initial_view_state=pdk.ViewState(latitude=lat_c, longitude=lon_c, zoom=zoom_inicial, pitch=45),
-                layers=capas,
-                tooltip={"text": "{nombre}"}
-            ))
+            st.pydeck_chart(pdk.Deck(map_style="mapbox://styles/mapbox/light-v9", initial_view_state=pdk.ViewState(latitude=lat_c, longitude=lon_c, zoom=zoom_inicial, pitch=45), layers=capas, tooltip={"text": "{nombre}"}))
+
     with cg:
         st.subheader("👑 Guía Maestra de Viaje")
         if st.button("📝 Generar Itinerario y Logística"):
-            with st.spinner("Construyendo guía..."):
+            with st.spinner("Construyendo el cerebro del viaje..."):
                 mes_n = MESES_FULL[f_ida.month-1][1]
+                niños_str = "con áreas verdes o parques infantiles para los niños" if viajan_ninos else "para descansar y tomar algo"
+                pet_str = "Menciona parques donde soltar al perro en las ciudades." if viaja_mascota else ""
                 
-                # --- LÓGICA DEL PROMPT 1: ITINERARIO ---
+                # --- PROMPT 1: ITINERARIO ---
                 if tipo_viaje == "🏙️ Ciudad Única":
-                    p1_c = f"Actúa como el mejor guía local de {c_dest}. Itinerario de {num_dias} días para {grupo_texto}. Plan: {estilo_viaje}."
+                    p1_c = f"Actúa como guía de {c_dest}. Itinerario de {num_dias} días para {grupo_texto}. Plan: {estilo_viaje}. {pet_str}"
                 else:
-                    detalles_motor = f"Vehículo: {tipo_vehiculo} (Modelo/Consumo: {modelo_coche}). Estilo de ruta: {estilo_conduccion}." if pref_trans == "🚗 Coche Propio / Alquiler" else ""
-                    p1_c = f"Actúa como experto en Roadtrips. Ruta: {c_dest} (Desde {c_orig}). Duración: {num_dias} días. Transporte: {pref_trans}. Ritmo: {ritmo_ruta}. {detalles_motor}"
+                    detalles_motor = f"Vehículo: {tipo_vehiculo} (Modelo: {modelo_coche}). Ruta: {estilo_conduccion}." if pref_trans == "🚗 Coche Propio / Alquiler" else ""
+                    p1_c = f"Experto en Roadtrips. Ruta: {c_orig}, {c_dest}. Días: {num_dias}. Grupo: {grupo_texto}. {detalles_motor}. {pet_str}"
 
                 p1 = p1_c + """
-                Adapta todo a sus edades. Usa Markdown y sé muy estructurado.
-                AL FINAL DE CADA DÍA añade: [🗺️ Abrir Ruta en Google Maps](https://www.google.com/maps/dir/Lugar1/Lugar2/Lugar3)
+                Usa Markdown.
+                ### 🔗 El Enlace Maestro
+                Al principio del itinerario, genera un ÚNICO enlace de Google Maps que contenga todas las paradas de la ruta.
+                
+                ### 🌟 Desvíos Genius y Paradas Tácticas
+                - Si hay alguna joya oculta cerca de la ruta, recomiéndalo como 'Desvío Genius'.
                 """
+                if tipo_viaje == "🚗 Roadtrip / Ruta":
+                    p1 += f"- Para los tramos largos de conducción (>3 horas), recomienda una 'Parada Táctica' exacta a mitad de camino {niños_str}.\n"
                 
                 if pref_trans == "🚗 Coche Propio / Alquiler" and tipo_viaje != "🏙️ Ciudad Única":
                     p1 += """
-                ### 🅿️ Estrategia de Aparcamiento y Pernocta
-                Para cada ciudad principal, recomienda:
-                1. Un Parking P+R (Aparca y Viaja) a las afueras, barato y conectado por transporte al centro.
-                2. Un Parking VIP/Céntrico para los que prefieren pagar más pero ahorrar tiempo.
+                ### 🅿️ Estrategia de Aparcamiento
+                Recomienda en cada ciudad:
+                1. Parking P+R (Aparca y Viaja) a las afueras.
+                2. Parking VIP/Céntrico para ahorrar tiempo.
                 """
                     if "Furgoneta" in tipo_vehiculo or "Autocaravana" in tipo_vehiculo:
-                        p1 += "3. 🚐 Un par de 'Spots' legales o campings recomendados para dormir con la camper/autocaravana cerca de cada zona.\n"
+                        p1 += "3. 🚐 'Spots' legales o campings para dormir con camper.\n"
                 
                 p1 += """
-                ### 🌟 Desvíos Genius (IMPORTANTE)
-                Si hay alguna joya oculta o pueblo espectacular cerca de la ruta que no haya incluido, recomiéndalo.
-                ### 🎧 Entretenimiento de Carretera
-                Recomienda 3 canciones y 1 temática de podcast perfecta para esta ruta.
-                ### 🍽️ Restaurantes Top (15)
-                Con ⭐. 🟢 Económicos: 5. 🟡 Calidad-Precio: 5. 🔴 Premium: 5.
-                ### 🎬 Cultura Pop y Trampas para Turistas
-                1 o 2 escenarios de películas/series y 2 estafas comunes aquí.
+                ### 🎧 Entretenimiento
+                3 canciones y 1 temática de podcast histórica de la zona.
+                ### 🍽️ Restaurantes
+                5 Económicos, 5 Calidad-Precio, 5 Premium.
                 """
                 st.session_state.guia_p1 = preguntar_ia_seguro(p1)
                 
-                # --- LÓGICA DEL PROMPT 2: LOGÍSTICA Y MATEMÁTICAS ---
-                p2 = f"""Actúa como experto logístico para {grupo_texto} viajando a {c_dest} en {mes_n}.
-                """
+                # --- PROMPT 2: LOGÍSTICA ---
+                p2 = f"Experto logístico para {grupo_texto} a {c_dest} en {mes_n}.\n"
                 if pref_trans == "🚗 Coche Propio / Alquiler" and tipo_viaje != "🏙️ Ciudad Única":
                     p2 += f"""
-                ### ⛽ Cálculo Matemático de Carretera
-                Haz un cálculo estructurado de:
-                - Distancia total aproximada en KM de esta ruta completa.
-                - Gasto estimado de combustible teniendo en cuenta este vehículo/consumo: {modelo_coche} (Tipo: {tipo_vehiculo}).
-                - Coste aproximado de PEAJES de la ruta.
-                - Si es Coche Eléctrico (EV), menciona brevemente el estado de la red de recarga en esta zona.
+                ### ⛽ Matemáticas y Tiempos de Carretera
+                Crea una tabla en Markdown con las distancias y tiempos de conducción de CADA tramo del viaje (Ej: Tramo 1: Bilbao -> Burdeos | 330km | 3h 15m).
+                Haz un cálculo del Gasto de Combustible (Modelo: {modelo_coche}) y Coste de PEAJES totales.
+                Si es EV, evalúa la red de recarga.
                 
-                ### 👮 Alertas Legales y Fronterizas
-                Menciona normas de conducción (ZTLs, viñetas de autopista, límites de velocidad) de las zonas a visitar.
+                ### 👮 Leyes y Fronteras
+                Menciona ZTLs, viñetas de peaje o normativas de los países.
+                
+                ### 🧰 Chuleta de Emergencia
+                Tabla con 5 frases traducidas al idioma local: Pinchazo, Grúa, Gasolina/Carga, Baño, Accidente.
                 """
                 
+                if viaja_mascota:
+                    p2 += "### 🐶 Pasaporte Perruno\nNormativas legales para cruzar a estos países con mascota (pasaporte, vacunas).\n"
+                
                 p2 += """
-                ### 🚇 Movilidad Urbana
-                ¿Qué abono de transporte comprar para moverse por dentro de las ciudades?
-                ### 🌤️ Clima Real
-                Clima esperado y consejos de vestimenta.
-                ### 💰 Presupuesto Realista
-                Coste estimado TOTAL para todas las personas (excluyendo vuelos).
+                ### 🚇 Movilidad y Presupuesto
+                Abonos de transporte recomendados y Presupuesto total estimado.
                 ### 🧻 Supervivencia Urbana
-                Enchufe, Baños Públicos, Supermercados Locales, Farmacias.
+                Enchufe, Baños Públicos, Supermercados, Farmacias.
                 """
                 st.session_state.guia_p2 = preguntar_ia_seguro(p2)
                 
-                p3 = f"Viajan {grupo_texto} a {c_dest} en {mes_n}. Genera lista de 10-12 objetos imprescindibles para maleta/roadtrip. SOLO array JSON de strings: ['Obj 1', 'Obj 2']."
+                p3 = f"Viajan {grupo_texto} a {c_dest} en {mes_n}. 10-12 objetos para maleta. SOLO array JSON de strings."
                 res_maleta = preguntar_ia_seguro(p3)
                 try: st.session_state.guia_p3 = json.loads(re.search(r'\[.*\]', res_maleta, re.DOTALL).group())
-                except: st.session_state.guia_p3 = ["Documentación", "Cargador coche", "Botiquín", "Gafas de sol"]
+                except: st.session_state.guia_p3 = ["Documentación", "Cargador", "Botiquín", "Gafas de sol"]
 
-        # SEGURO DE VIDA PARA TABS
         if 'guia_p1' in st.session_state and 'guia_p2' in st.session_state:
             tab1, tab2, tab3 = st.tabs(["🗺️ Itinerario & Secretos", "🚇 Logística & Motor", "🎒 Equipaje"])
             with tab1: st.markdown(st.session_state.guia_p1)
@@ -475,4 +445,5 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
             
             st.divider()
             texto_descarga = st.session_state.guia_p1 + "\n\n---\n\n" + st.session_state.guia_p2
-            st.download_button("⬇️ Descargar Guía del Viaje", texto_descarga, f"Guia_Roadtrip.md", type="primary")
+            st.download_button("⬇️ Descargar Guía del Viaje", texto_descarga, "Guia_Roadtrip.md", type="primary")     
+
