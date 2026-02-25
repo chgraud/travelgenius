@@ -96,6 +96,17 @@ def calcular_fecha(mes, dias, tipo, semana=1, inicio=10):
 if 'busqueda_iniciada' not in st.session_state:
     st.session_state.busqueda_iniciada = False
 
+# Memoria para saber cuántas paradas queremos mostrar
+if 'num_paradas' not in st.session_state:
+    st.session_state.num_paradas = 1
+
+def add_parada():
+    st.session_state.num_paradas += 1
+
+def remove_parada():
+    if st.session_state.num_paradas > 1:
+        st.session_state.num_paradas -= 1
+
 st.title("🌍 Travel Genius Pro: Roadtrip & Flights")
 
 MESES_FULL = [(1,"Enero"), (2,"Febrero"), (3,"Marzo"), (4,"Abril"), (5,"Mayo"), (6,"Junio"),
@@ -116,7 +127,24 @@ with st.sidebar:
         pref_trans = "Cualquiera"
         ritmo_ruta = "N/A"
     else:
-        c_dest = st.text_area("Ruta (ciudades separadas por coma):", "")
+        st.markdown("**📍 Paradas de la Ruta**")
+        paradas_lista = []
+        
+        # Generador mágico de cajetines
+        for i in range(st.session_state.num_paradas):
+            p_val = st.text_input(f"Parada {i+1}:", key=f"parada_input_{i}")
+            if p_val:
+                paradas_lista.append(p_val)
+                
+        # Juntamos las paradas con comas por detrás para que la IA lo entienda
+        c_dest = ", ".join(paradas_lista)
+        
+        # Botones bonitos alineados
+        c_btn1, c_btn2 = st.columns(2)
+        c_btn1.button("➕ Añadir parada", on_click=add_parada, use_container_width=True)
+        c_btn2.button("➖ Quitar parada", on_click=remove_parada, use_container_width=True)
+
+        st.markdown("---")
         pref_trans = st.selectbox("Preferencia de Transporte:", ["🚗 Coche Propio / Alquiler", "🚆 Transporte Público"])
         ritmo_ruta = st.select_slider("Ritmo:", options=["Relajado", "Equilibrado", "Intenso"], value="Equilibrado")
         
@@ -179,7 +207,7 @@ with st.sidebar:
             for k in ['mapa_gen', 'hoteles_gen', 'semaforo_vuelo', 'analisis_transporte', 'guia_p1', 'guia_p2', 'guia_p3', 'iata_origen', 'iata_destino', 'barrios_gen', 'coches_gen']:
                 if k in st.session_state: del st.session_state[k]
         else:
-            st.warning("⚠️ Por favor, rellena el Origen y el Destino para comenzar.")
+            st.warning("⚠️ Por favor, rellena el Origen y al menos una Parada para comenzar.")
 # --- LÓGICA DE RESULTADOS ---
 if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
     
@@ -445,5 +473,6 @@ if st.session_state.busqueda_iniciada and f_ida and c_orig and c_dest:
             
             st.divider()
             texto_descarga = st.session_state.guia_p1 + "\n\n---\n\n" + st.session_state.guia_p2
-            st.download_button("⬇️ Descargar Guía del Viaje", texto_descarga, "Guia_Roadtrip.md", type="primary")     
+            st.download_button("⬇️ Descargar Guía del Viaje", texto_descarga, "Guia_Roadtrip.md", type="primary")                                
+
 
